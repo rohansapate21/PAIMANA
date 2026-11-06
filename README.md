@@ -96,10 +96,3 @@ python data/scripts/validate_master.py
 
 14 monthly PAIMANA Flash Reports (July 2025 – August 2026) covering ~1,981 infrastructure projects across 17 Ministries and 22 sectors, with an aggregate cost of ~₹42.78 lakh crore.
 
-## Team
-
-Smart India Hackathon 2026 — Problem Statement 26103
-
-## License
-
-Open-source (MIT License) — all tools and dependencies are open-source as required by the problem statement.
