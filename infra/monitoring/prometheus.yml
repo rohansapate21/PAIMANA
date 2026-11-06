@@ -1,0 +1,105 @@
+# ============================================================
+# SIH 2026 – PS26103 | Prometheus Scrape Configuration
+# AI-Powered Predictive Analytics & Early Warning System
+# ============================================================
+#
+# Prometheus scrapes metrics from the following targets:
+#   - paimana-backend  : FastAPI app (prometheus_fastapi_instrumentator)
+#   - celery-exporter  : Celery worker task metrics
+#   - postgres-exporter: PostgreSQL connection pool & query stats
+#   - redis-exporter   : Redis cache hit/miss & memory stats
+#   - cadvisor         : Container-level CPU/Memory/Network
+#
+# All targets are referenced by Docker Compose service names
+# and resolve inside the shared Docker bridge network.
+# ============================================================
+
+global:
+  # Default interval at which targets are scraped
+  scrape_interval: 15s
+  # Interval at which the targets group is re-evaluated
+  evaluation_interval: 15s
+  # External labels to attach to all time-series (useful for multi-cluster)
+  external_labels:
+    project: "paimana"
+    environment: "production"
+
+# ─── Rule Files ──────────────────────────────────────────────
+rule_files:
+  - "rules/*.yml"
+
+# ─── Alertmanager Integration ────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # Uncomment and point to alertmanager when deployed:
+          # - targets: ['alertmanager:9093']
+
+# ─── Scrape Configurations ───────────────────────────────────
+scrape_configs:
+
+  # --- PAIMANA FastAPI Backend ---
+  # Exposes metrics via /metrics (prometheus_fastapi_instrumentator)
+  - job_name: "paimana-backend"
+    scrape_interval: 10s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: "fastapi"
+          component: "backend"
+
+  # --- Celery Worker (flower / celery-exporter) ---
+  # Uses celery-exporter (danihodovic/celery-exporter) on port 9808
+  - job_name: "celery-worker"
+    scrape_interval: 30s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["celery-exporter:9808"]
+        labels:
+          service: "celery"
+          component: "worker"
+
+  # --- PostgreSQL Exporter ---
+  # Uses prometheus-community/postgres_exporter on port 9187
+  - job_name: "postgres"
+    scrape_interval: 30s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: "postgresql"
+          component: "database"
+
+  # --- Redis Exporter ---
+  # Uses oliver006/redis_exporter on port 9121
+  - job_name: "redis"
+    scrape_interval: 30s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          service: "redis"
+          component: "cache"
+
+  # --- cAdvisor (container resource metrics) ---
+  # Uses gcr.io/cadvisor/cadvisor on port 8080
+  - job_name: "cadvisor"
+    scrape_interval: 15s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          service: "cadvisor"
+          component: "infrastructure"
+
+  # --- Prometheus Self-Monitoring ---
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+          component: "monitoring"
+

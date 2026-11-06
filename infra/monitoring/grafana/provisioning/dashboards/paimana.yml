@@ -1,0 +1,20 @@
+# ============================================================
+# SIH 2026 – PS26103 | Grafana Dashboard Provisioning
+# Tells Grafana where to find pre-built dashboard JSON files.
+# ============================================================
+
+apiVersion: 1
+
+providers:
+  - name: "PAIMANA Dashboards"
+    orgId: 1
+    # Watch folder for JSON dashboard definitions
+    folder: "PAIMANA"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
+

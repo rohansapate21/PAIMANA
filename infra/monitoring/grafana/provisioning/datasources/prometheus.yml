@@ -1,0 +1,22 @@
+# ============================================================
+# SIH 2026 – PS26103 | Grafana Datasource Provisioning
+# Automatically wires Prometheus as the default datasource
+# so dashboards load without manual UI configuration.
+# ============================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Grafana reaches Prometheus by Docker service name
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Use server-side HTTP method for large range queries
+      httpMethod: POST
+      # Align scrape intervals to Prometheus global scrape_interval
+      timeInterval: "15s"
+

@@ -1,0 +1,173 @@
+{
+  "total_reports": 15,
+  "successful": 15,
+  "total_rows_extracted": 24636,
+  "per_report": [
+    {
+      "filename": "FlashReport_April2026.pdf",
+      "report_month": "2026-04",
+      "total_pages": 163,
+      "table6_start_page": 35,
+      "pages_with_data": 125,
+      "rows_extracted": 2241,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:18:02.961785"
+    },
+    {
+      "filename": "FlashReport_August_2025.pdf",
+      "report_month": "2025-08",
+      "total_pages": 67,
+      "table6_start_page": 33,
+      "pages_with_data": 33,
+      "rows_extracted": 803,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:18:44.772713"
+    },
+    {
+      "filename": "FlashReport_August_2026 (1).pdf",
+      "report_month": "2026-08",
+      "total_pages": 153,
+      "table6_start_page": 37,
+      "pages_with_data": 113,
+      "rows_extracted": 2024,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:20:13.227706"
+    },
+    {
+      "filename": "FlashReport_August_2026.pdf",
+      "report_month": "2026-08",
+      "total_pages": 153,
+      "table6_start_page": 37,
+      "pages_with_data": 113,
+      "rows_extracted": 2024,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:21:43.363412"
+    },
+    {
+      "filename": "FlashReport_December_2025.pdf",
+      "report_month": "2025-12",
+      "total_pages": 108,
+      "table6_start_page": 35,
+      "pages_with_data": 68,
+      "rows_extracted": 1508,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:23:05.212332"
+    },
+    {
+      "filename": "FlashReport_February_2026.pdf",
+      "report_month": "2026-02",
+      "total_pages": 168,
+      "table6_start_page": 36,
+      "pages_with_data": 126,
+      "rows_extracted": 2327,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:25:06.404158"
+    },
+    {
+      "filename": "FlashReport_January_2026.pdf",
+      "report_month": "2026-01",
+      "total_pages": 134,
+      "table6_start_page": 36,
+      "pages_with_data": 91,
+      "rows_extracted": 1961,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:26:42.148013"
+    },
+    {
+      "filename": "FlashReport_July_2025.pdf",
+      "report_month": "2025-07",
+      "total_pages": 67,
+      "table6_start_page": 33,
+      "pages_with_data": 30,
+      "rows_extracted": 727,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:27:19.223620"
+    },
+    {
+      "filename": "FlashReport_July_2026 (1).pdf",
+      "report_month": "2026-07",
+      "total_pages": 153,
+      "table6_start_page": 36,
+      "pages_with_data": 114,
+      "rows_extracted": 2010,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:28:50.739063"
+    },
+    {
+      "filename": "FlashReport_June_2026.pdf",
+      "report_month": "2026-06",
+      "total_pages": 161,
+      "table6_start_page": 36,
+      "pages_with_data": 121,
+      "rows_extracted": 2165,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:30:32.496092"
+    },
+    {
+      "filename": "FlashReport_March_2026.pdf",
+      "report_month": "2026-03",
+      "total_pages": 157,
+      "table6_start_page": 36,
+      "pages_with_data": 113,
+      "rows_extracted": 2097,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:32:22.006237"
+    },
+    {
+      "filename": "FlashReport_May2026.pdf",
+      "report_month": "2026-05",
+      "total_pages": 163,
+      "table6_start_page": 35,
+      "pages_with_data": 125,
+      "rows_extracted": 2211,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:34:00.391905"
+    },
+    {
+      "filename": "FlashReport_November_2025.pdf",
+      "report_month": "2025-11",
+      "total_pages": 73,
+      "table6_start_page": 33,
+      "pages_with_data": 37,
+      "rows_extracted": 864,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:34:43.561325"
+    },
+    {
+      "filename": "FlashReport_October_2025.pdf",
+      "report_month": "2025-10",
+      "total_pages": 73,
+      "table6_start_page": 33,
+      "pages_with_data": 36,
+      "rows_extracted": 854,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:35:26.793302"
+    },
+    {
+      "filename": "FlashReport_September_2025.pdf",
+      "report_month": "2025-09",
+      "total_pages": 72,
+      "table6_start_page": 33,
+      "pages_with_data": 35,
+      "rows_extracted": 820,
+      "warnings_count": 0,
+      "warnings": [],
+      "extracted_at": "2026-10-01T13:36:07.904385"
+    }
+  ],
+  "extracted_at": "2026-10-01T13:36:07.948084"
+}

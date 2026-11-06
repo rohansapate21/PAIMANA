@@ -1,0 +1,174 @@
+# ============================================================
+# SIH 2026 — PS26103 | Canonical Schema Map
+# Maps raw PDF column headers → standardized column names
+# ============================================================
+# The Flash Reports have consistent headers across all 14 months.
+# Table 6 ("All Ongoing Projects") is the primary detail table with
+# 8 columns containing stacked/multi-line data.
+#
+# Raw columns contain compound data that must be split:
+#   - "Project Name" cell contains: name, agency, project_code, legacy_code, pmgid
+#   - "Date of Approval" cell contains: approval_date + start_date
+#   - "Target DoC" cell contains: original_completion_date + revised_completion_date
+#   - "Cost" cell contains: original_cost + revised_cost
+# ============================================================
+
+# --- Table 6 raw column headers (as found in PDFs) ---
+raw_headers:
+  - "Sl.No"
+  - "Project Name (Agency) (Project Code) (Legacy OCMS Code) (PMGID)"
+  - "State"
+  - "Date of Approval (Start Date) MM/YYYY"
+  - "Orignal/Target DoC (Revised DoC) MM/YYYY"
+  - "Orignal Cost Revised Cost in Rs. Crore"
+  - "Cumulative Expenditure in Rs. Crore"
+  - "Physical Progress (%)"
+
+# --- Header aliases (for fuzzy matching across reports) ---
+header_aliases:
+  sl_no:
+    - "Sl.No"
+    - "Sl. No"
+    - "Sl.No."
+    - "S.No"
+    - "Sr.No"
+    - "Sr. No"
+  project_info:
+    - "Project Name (Agency) (Project Code) (Legacy OCMS Code) (PMGID)"
+    - "Project Name"
+    - "Name of Project"
+  state:
+    - "State"
+    - "State/UT"
+    - "Location"
+  approval_date:
+    - "Date of Approval (Start Date) MM/YYYY"
+    - "Date of Approval"
+    - "Approval Date"
+    - "Date of Sanction"
+  completion_date:
+    - "Orignal/Target DoC (Revised DoC) MM/YYYY"
+    - "Original/Target DoC"
+    - "Target Date of Completion"
+    - "DoC"
+  cost:
+    - "Orignal Cost Revised Cost in Rs. Crore"
+    - "Original Cost Revised Cost"
+    - "Cost (Rs. Crore)"
+    - "Orig. Cost (Rs. Cr.)"
+    - "Original Cost"
+  expenditure:
+    - "Cumulative Expenditure in Rs. Crore"
+    - "Cumulative Expenditure"
+    - "Expenditure (Rs. Crore)"
+    - "Expenditure"
+    - "Cumm. Exp."
+  physical_progress:
+    - "Physical Progress (%)"
+    - "Physical Progress"
+    - "Progress (%)"
+    - "% Progress"
+
+# --- Canonical output columns (after splitting compound fields) ---
+canonical_columns:
+  - sl_no                         # int: Serial number within report
+  - project_name                  # str: Full project name
+  - implementing_agency           # str: Agency in parentheses
+  - project_code                  # str: PAIMANA project code
+  - legacy_ocms_code              # str: Legacy OCMS code (may be "-" or empty)
+  - pmgid                         # str: PM Gati Shakti ID (may be "-" or empty)
+  - state                         # str: State / UT
+  - approval_date                 # str: MM/YYYY — date of project approval
+  - start_date                    # str: MM/YYYY — actual start date (may be same as approval)
+  - original_completion_date      # str: MM/YYYY — original target date of completion
+  - revised_completion_date       # str: MM/YYYY — revised DoC (if revised, else same as original)
+  - original_cost_cr              # float: Original sanctioned cost in Rs. Crore
+  - revised_cost_cr               # float: Revised cost in Rs. Crore
+  - expenditure_cr                # float: Cumulative expenditure in Rs. Crore
+  - physical_progress_pct         # float: Physical progress percentage (0-100)
+  - report_month                  # str: YYYY-MM — derived from filename/metadata
+
+# --- Tables to extract from each report ---
+tables:
+  table_6:
+    name: "All Ongoing Projects"
+    type: "project_detail"
+    description: "Master detail table — one row per ongoing project"
+    priority: primary  # This is the main table we need
+  table_3:
+    name: "Completed Projects"
+    type: "project_detail"
+    description: "Projects completed during the month"
+    priority: secondary
+  table_4:
+    name: "Newly Added Projects"
+    type: "project_detail"
+    description: "Projects newly added to monitoring"
+    priority: secondary
+  table_5:
+    name: "Ongoing Projects of NE Region"
+    type: "project_detail"
+    description: "NE region subset — rows also appear in Table 6"
+    priority: skip  # Subset of Table 6, avoid double-counting
+  table_1:
+    name: "Ministry-wise Ongoing Projects"
+    type: "summary"
+    description: "Aggregate statistics by Ministry"
+    priority: reference  # Use for validation counts
+  table_2:
+    name: "State-wise Ongoing Projects"
+    type: "summary"
+    description: "Aggregate statistics by State"
+    priority: reference
+
+# --- Report month mapping (filename → YYYY-MM) ---
+filename_to_month:
+  "FlashReport_July_2025": "2025-07"
+  "FlashReport_August_2025": "2025-08"
+  "FlashReport_September_2025": "2025-09"
+  "FlashReport_October_2025": "2025-10"
+  "FlashReport_November_2025": "2025-11"
+  "FlashReport_December_2025": "2025-12"
+  "FlashReport_January_2026": "2026-01"
+  "FlashReport_February_2026": "2026-02"
+  "FlashReport_March_2026": "2026-03"
+  "FlashReport_April2026": "2026-04"
+  "FlashReport_May2026": "2026-05"
+  "FlashReport_June_2026": "2026-06"
+  "FlashReport_July_2026 (1)": "2026-07"
+  "FlashReport_August_2026 (1)": "2026-08"
+
+# --- Canonical Ministry names (17 Ministries) ---
+canonical_ministries:
+  - "Ministry of Civil Aviation"
+  - "Ministry of Coal"
+  - "Ministry of Commerce and Industry"
+  - "Ministry of Defence"
+  - "Ministry of Health and Family Welfare"
+  - "Ministry of Housing and Urban Affairs"
+  - "Ministry of Information and Broadcasting"
+  - "Ministry of Mines"
+  - "Ministry of New and Renewable Energy"
+  - "Ministry of Petroleum and Natural Gas"
+  - "Ministry of Power"
+  - "Ministry of Railways"
+  - "Ministry of Road Transport and Highways"
+  - "Ministry of Science and Technology"
+  - "Ministry of Shipping / Ports, Shipping and Waterways"
+  - "Ministry of Steel"
+  - "Ministry of Water Resources / Jal Shakti"
+
+# --- Data cleaning rules ---
+cleaning_rules:
+  cost_unit: "crore"           # All costs normalized to Rs. Crore
+  progress_range: [0, 100]     # Clip physical progress to this range
+  date_format: "MM/YYYY"       # Expected raw date format in PDFs
+  id_type: "string"            # Never cast project IDs to integer
+  null_markers:                # Values treated as null/missing
+    - "-"
+    - "N.A."
+    - "NA"
+    - "N/A"
+    - ""
+    - "Not Available"
+    - "Not Applicable"

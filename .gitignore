@@ -1,0 +1,78 @@
+# ============================================================
+# SIH 2026 — PS26103 | .gitignore
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Environment ---
+.env
+.env.local
+.env.production
+
+# --- Data (large files tracked by DVC) ---
+data/source_pdfs/*.pdf
+data/raw_zone/*.parquet
+data/raw_zone/*.csv
+data/interim/*.parquet
+data/interim/*.csv
+data/master/*.parquet
+data/master/*.csv
+data/validation/*.html
+*.dvc
+
+# --- ML Artifacts ---
+ml/models/*.pkl
+ml/models/*.joblib
+ml/models/*.json
+ml/mlruns/
+mlruns/
+
+# --- Node / Frontend ---
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+*.tsbuildinfo
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Database ---
+*.db
+*.sqlite3
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Coverage ---
+htmlcov/
+.coverage
+.coverage.*

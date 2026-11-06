@@ -1,0 +1,889 @@
+# SIH 2026 — PS ID 26103
+## AI-Powered Predictive Analytics & Early Warning System for Infrastructure Project Monitoring
+### Complete Solution Architecture & Implementation Roadmap
+**Organization:** Ministry of Statistics & Programme Implementation (MoSPI) | **Data Source:** PAIMANA / OCMS Flash Reports
+
+---
+
+## 0. Executive Summary
+
+The system ingests 14 monthly PAIMANA Flash Report PDFs (₹150 Cr+ projects, ~1,700–2,000 projects/month, 17 Ministries, 22 sectors), converts them into a **longitudinal (panel) time-series master dataset** keyed by Project ID × Report Month, engineers delay/overrun features, trains ML models to predict **cost overrun risk**, **time delay risk**, and an aggregate **Project Risk Score**, and exposes this through a **FastAPI backend + React dashboard** with **explainable AI** (SHAP) so MoSPI officials can see *why* a project is flagged and *what to do about it*.
+
+**Core design principle:** Treat each project as a **time-series entity**, not a static row. The same Project ID recurs across 14 reports — this repeated measurement is the single richest signal in the dataset (trend of cost creep, progress velocity, stagnation streaks) and must drive the feature engineering strategy.
+
+---
+
+## 1. High-Level System Architecture
+
+```mermaid
+flowchart TB
+    subgraph SRC["Data Source Layer"]
+        A1[14 Monthly PAIMANA PDFs]
+    end
+
+    subgraph ING["Data Engineering Layer"]
+        B1[PDF Extraction Engine]
+        B2[Schema Normalization]
+        B3[Raw Zone - Parquet/CSV per month]
+    end
+
+    subgraph PREP["Preprocessing & Integration Layer"]
+        C1[Merge 14 Reports]
+        C2[Project ID Reconciliation]
+        C3[Longitudinal Panel Builder]
+        C4[Cleaning + Validation]
+        C5[(Master Dataset - project_month_panel)]
+    end
+
+    subgraph ML["ML / Analytics Layer"]
+        D1[Feature Store]
+        D2[Target Engineering]
+        D3[Model Training - Classification/Regression]
+        D4[Risk Scoring Engine]
+        D5[Early Warning Rules Engine]
+        D6[SHAP Explainability]
+    end
+
+    subgraph DB["Persistence Layer"]
+        E1[(PostgreSQL - Operational DB)]
+        E2[(Model Registry / Artifacts)]
+    end
+
+    subgraph API["Backend Layer"]
+        F1[FastAPI REST/GraphQL API]
+        F2[Auth + RBAC]
+        F3[Scheduler - monthly retrain/ingest]
+    end
+
+    subgraph UI["Frontend Layer"]
+        G1[React + TS Dashboard]
+        G2[Risk Heatmaps, Ministry/State Drilldowns]
+        G3[Early Warning Alerts Panel]
+        G4[Explainability Views]
+    end
+
+    A1 --> B1 --> B2 --> B3 --> C1 --> C2 --> C3 --> C4 --> C5
+    C5 --> D1 --> D2 --> D3 --> D4 --> D5
+    D3 --> D6
+    C5 --> E1
+    D4 --> E1
+    D6 --> E2
+    D3 --> E2
+    E1 --> F1
+    E2 --> F1
+    F1 --> F2 --> F1
+    F3 --> B1
+    F3 --> D3
+    F1 --> G1 --> G2
+    G1 --> G3
+    G1 --> G4
+```
+
+---
+
+## 2. Phase-Wise Roadmap
+
+---
+
+### **Phase 0 — Project Setup & Environment**
+
+**Objective:** Establish reproducible, version-controlled environment for the whole team.
+
+**Inputs:** None (bootstrap phase)
+
+**Processing Steps:**
+1. Initialize monorepo with `data/`, `ml/`, `backend/`, `frontend/`, `docs/` top-level folders.
+2. Set up Python virtual environment + `requirements.txt` (or `poetry`/`uv`).
+3. Set up Node/React project with TypeScript.
+4. Configure Git, `.gitignore`, pre-commit hooks (black, isort, flake8/ruff, eslint, prettier).
+5. Set up Docker + `docker-compose.yml` skeleton (Postgres, backend, frontend, ML service).
+6. Create `.env.example` for secrets/config.
+7. Set up experiment tracking (MLflow) and DVC for data versioning.
+
+**Outputs:** Working skeleton repo, CI stub (GitHub Actions).
+
+**Deliverables:** Repo scaffold, README, architecture diagram, environment setup guide.
+
+**Recommended Tools:** Git, GitHub Actions, Docker, Docker Compose, Poetry/uv, DVC, MLflow.
+
+**Folder Structure:**
+```
+project-root/
+├── data/
+├── ml/
+├── backend/
+├── frontend/
+├── docs/
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+### **Phase 1 — Data Ingestion & PDF Extraction**
+
+**Objective:** Convert 14 unstructured PAIMANA PDF Flash Reports into structured, machine-readable monthly tables without losing project-level granularity.
+
+**Inputs:** 14 monthly PAIMANA Flash Report PDFs (July 2026, Aug 2026 samples + 12 more to be sourced).
+
+**Processing Steps:**
+1. **Document profiling** — inspect each PDF for: table structure consistency, page layout (tables may span pages), presence of scanned vs. digital text, summary vs. project-level tables.
+2. **Extraction strategy selection** per report type:
+   - Digital text PDFs with clean tables → `pdfplumber` / `camelot` (lattice or stream mode).
+   - Complex multi-column / merged-cell tables → `camelot` with manual `table_areas` tuning, or `tabula-py`.
+   - Scanned/image PDFs → OCR fallback (`pytesseract` + `pdf2image`), with post-OCR regex cleanup.
+3. **Per-report parsing script** (`extract_report.py`) that:
+   - Locates the project-level table(s) vs. summary/aggregate tables (extract both, tag separately).
+   - Extracts column headers and maps them to a **canonical schema** (headers vary slightly month-to-month — e.g., "Orig. Cost (Rs. Cr.)" vs "Original Cost").
+   - Preserves the **report month** as a field on every extracted row (critical for time-series).
+4. **Header mapping dictionary** (`schema_map.yaml`) — maintains aliases across the 14 reports so column drift doesn't break the pipeline.
+5. **Per-page validation**: row count sanity check against report's own summary statistics (e.g., "1,842 projects monitored" stated in report text vs. rows extracted).
+6. Save each month's extraction as `raw/YYYY_MM_projects.parquet` + a `extraction_log.json` (rows extracted, warnings, low-confidence cells).
+7. Manual QA pass on a sample of rows per report (spot-check 20–30 rows against source PDF).
+
+**Outputs:** 14 raw monthly Parquet/CSV files + extraction logs + schema mapping dictionary.
+
+**Deliverables:** `raw_zone/` dataset, extraction QA report, canonical schema doc.
+
+**Recommended Tools:** `pdfplumber`, `camelot-py`, `tabula-py`, `pytesseract`, `pdf2image`, `pandas`, `PyYAML`.
+
+**Folder Structure:**
+```
+data/
+├── source_pdfs/
+│   ├── 2025_07_flash_report.pdf ... 2026_08_flash_report.pdf
+├── raw_zone/
+│   ├── 2025_07_projects.parquet
+│   ├── ... (14 files)
+│   └── extraction_logs/
+├── schema_map.yaml
+└── scripts/
+    └── extract_report.py
+```
+
+---
+
+### **Phase 2 — Data Preprocessing & Master Dataset Construction (CORE PHASE)**
+
+**Objective:** Merge 14 monthly extracts into one clean, validated, **longitudinal panel dataset** — one row per (Project ID, Report Month) — that is analysis-ready and leak-free.
+
+**Inputs:** 14 raw monthly Parquet files from Phase 1, `schema_map.yaml`.
+
+#### 2.1 Merging the 14 Monthly Reports
+- Concatenate all 14 monthly tables into one long-format DataFrame with a `report_month` column (`YYYY-MM`).
+- Apply the canonical schema mapping so every month's columns align to the same names/types before concatenation.
+- Tag each row's **source report** (for traceability/auditing back to the PDF page).
+
+#### 2.2 Handling Duplicate / Recurring Project IDs
+- Project ID is **expected** to repeat across months — this is not a duplicate to remove, it's the time-series signal.
+- True duplicates (same Project ID + same report_month appearing twice due to extraction error) → deduplicate keeping the row with highest field-completeness; log conflicts to `dedup_conflicts.csv` for manual review.
+- Handle **Project ID drift**: some projects may have minor ID formatting differences across months (leading zeros, spacing, ministry-prefix changes). Build a **fuzzy-matching reconciliation step** (`rapidfuzz` on Project ID + Project Name + Ministry + Sector) to merge such split identities into one canonical `project_uid`.
+- Maintain a `project_id_crosswalk.csv` mapping raw IDs → canonical `project_uid`.
+
+#### 2.3 Building the Longitudinal Project History
+- Pivot to a **panel structure**: `project_uid × report_month` as composite key.
+- For each `project_uid`, sort by `report_month` and compute **lagged/derived time-series fields**:
+  - `cost_at_t-1`, `progress_at_t-1`, `delta_cost`, `delta_progress` (month-over-month change)
+  - `months_since_first_seen`, `months_since_sanction`
+  - `progress_stagnation_streak` (consecutive months with ~0% physical progress change)
+  - `cost_revision_count` (cumulative number of times revised cost changed)
+- Create a **project master (entity) table**: one row per `project_uid` with static attributes (Ministry, Sector, State, Original Sanction Date, Original Cost) — separate from the monthly panel table to avoid redundant storage (normalize per Phase 11 schema).
+
+#### 2.4 Missing Value Strategy
+| Field Type | Strategy |
+|---|---|
+| Static categorical (Ministry, Sector, State) | Forward/backward-fill within same `project_uid` across months (should not change) |
+| Numeric cost fields | If missing in month *t* but present in *t-1* and *t+1* → interpolate; if missing at report boundaries → leave null, flag `is_imputed` |
+| Physical progress % | Never impute with mean/median (misleading for progress). Use last-observed-carried-forward (LOCF) capped at 2 months, else null |
+| Dates (sanction, completion) | Cross-validate against other months' reports for the same project; if irreconcilable, mark `date_quality_flag = 'low'` |
+| Entirely missing rows (project absent in a given month) | This is meaningful (could mean completed, dropped from ₹150 Cr+ threshold, or reporting gap) — encode as explicit `not_reported_this_month` state rather than dropping |
+
+- Add an `is_imputed` boolean companion column for every field that undergoes imputation, so models and dashboards can distinguish real vs. inferred values.
+
+#### 2.5 Datatype Conversion
+- Cost/expenditure fields: strip currency symbols, commas, "Cr."/"Lakh" suffixes → convert all to a single unit (₹ Crore), store as `float64`.
+- Percentage fields (physical progress): strip "%", clip to [0, 100], store as `float32`.
+- IDs: store as `string` (never auto-cast to int — leading zeros / alphanumeric prefixes get corrupted).
+- Categorical fields: cast to `category` dtype after standardization (Section 2.7) for memory efficiency.
+- Boolean/status flags: map to explicit enums, not raw strings.
+
+#### 2.6 Date Handling
+- Normalize all date fields to ISO 8601 (`YYYY-MM-DD`) using `pandas.to_datetime` with explicit `format=` per source pattern (reports may use DD/MM/YYYY or Mon-YYYY strings).
+- Handle partial dates (only month-year given, e.g., "Mar-2024") → store with `day=01` + a `date_precision` flag (`'day'`/`'month'`/`'year'`).
+- Derive: `project_age_months`, `original_vs_revised_timeline_slip_months`, `report_month` as proper `Period[M]`.
+- Detect and flag illogical dates (completion date before sanction date, future sanction dates) → `date_anomaly_flag`.
+
+#### 2.7 Numerical Cleaning
+- Enforce non-negativity for cost/expenditure fields; negative values → flag and null (likely extraction/OCR error).
+- Cross-field consistency checks: `expenditure ≤ revised_cost * tolerance`, `physical_progress` should not regress by more than a small threshold month-over-month without a documented reason (flag, don't silently correct).
+- Standardize units (some rows may report in Lakh instead of Crore due to OCR/table misread) — apply a **magnitude sanity filter**: if a cost value is >100x the ministry/sector median, flag `possible_unit_error` for review rather than auto-correcting.
+
+#### 2.8 Categorical Standardization
+- Ministry names: many reports abbreviate inconsistently ("M/o Road Transport & Highways" vs "MoRTH" vs "Ministry of Road Transport and Highways") → build a **lookup dictionary** (17 canonical Ministry names) and fuzzy-match with `rapidfuzz`, manually verify low-confidence matches.
+- Sector names: similarly normalize to the 22 canonical sectors.
+- State/UT names: standardize using the official Indian Census/GoI state list (handle "Odisha" vs "Orissa", "NCT of Delhi" vs "Delhi", multi-state projects → explode or tag as `is_multi_state`).
+- Project Status: map free-text status strings ("On Schedule", "Delayed", "Time Overrun", "Cost & Time Overrun", "Completed") to a fixed categorical enum used consistently downstream.
+
+#### 2.9 Outlier Handling
+- Use **domain-aware bounds**, not blind z-score removal (this is infra project data — legitimate extreme values exist, e.g., a genuinely ₹50,000 Cr project).
+- Detect outliers via IQR/Isolation Forest **per Ministry/Sector group** (a ₹5,000 Cr outlier in Rural Roads ≠ outlier in Railways).
+- Never delete outlier rows — flag with `outlier_flag` and `outlier_reason`; let modeling phase decide (robust scalers, tree-based models handle these natively).
+
+#### 2.10 Validation Checks (before freezing master dataset)
+- Row-count reconciliation: sum of monthly extracted rows vs. expected (~1,700–2,000/month × 14).
+- Referential integrity: every `project_uid` in the panel table exists in the project master (entity) table.
+- Schema conformance test (via `pandera` or `great_expectations`): dtypes, allowed value ranges, non-null constraints on key fields.
+- Time-series continuity check: flag projects with implausible gaps (present in month 1 and month 14 but missing all months in between).
+- Duplicate composite-key check (`project_uid` + `report_month` must be unique post-cleaning).
+- Automated **data quality report** generated per run (`great_expectations` HTML report / `ydata-profiling`).
+
+#### 2.11 Final Master Dataset Structure
+Two normalized tables (feeding the Phase 11 DB schema):
+
+**`project_master`** (1 row per project): `project_uid`, `original_project_id`, `project_name`, `ministry`, `sector`, `state`, `original_cost_cr`, `original_sanction_date`, `original_completion_date`, `date_precision`, `first_seen_report_month`, `last_seen_report_month`.
+
+**`project_month_panel`** (1 row per project × month — the time-series fact table): `project_uid`, `report_month`, `revised_cost_cr`, `expenditure_cr`, `physical_progress_pct`, `project_status`, `delta_cost_cr`, `delta_progress_pct`, `progress_stagnation_streak`, `cost_revision_count`, `months_since_sanction`, `is_imputed_flags (JSON)`, `outlier_flag`, `date_anomaly_flag`.
+
+**Outputs:** `master/project_master.parquet`, `master/project_month_panel.parquet`, `data_quality_report.html`, `project_id_crosswalk.csv`.
+
+**Deliverables:** Cleaned, validated, versioned (DVC-tracked) master dataset ready for EDA/ML; full preprocessing documentation.
+
+**Recommended Tools:** `pandas`, `numpy`, `rapidfuzz`, `pandera`/`great_expectations`, `ydata-profiling`, `DVC`.
+
+**Folder Structure:**
+```
+data/
+├── raw_zone/
+├── interim/
+│   ├── merged_long.parquet
+│   ├── dedup_conflicts.csv
+│   └── project_id_crosswalk.csv
+├── master/
+│   ├── project_master.parquet
+│   └── project_month_panel.parquet
+├── validation/
+│   ├── data_quality_report.html
+│   └── ge_expectations/
+└── scripts/
+    ├── merge_reports.py
+    ├── clean_master.py
+    └── validate_master.py
+```
+
+---
+
+### **Phase 3 — Exploratory Data Analysis (EDA)**
+
+**Objective:** Understand distributions, trends, correlations, and label-worthy patterns before feature/target engineering.
+
+**Inputs:** `project_master.parquet`, `project_month_panel.parquet`.
+
+**Processing Steps:**
+1. Univariate analysis: cost distribution, progress distribution, status distribution per Ministry/Sector/State.
+2. Time-series analysis: average physical progress trajectory vs. ideal linear progress line, cost-revision trend across 14 months.
+3. Overrun analysis: % of projects with cost overrun, time overrun, both — segmented by Ministry/Sector/State/project-age-bucket.
+4. Correlation analysis: progress stagnation vs. eventual cost overrun; early delay vs. final status.
+5. Cohort analysis: group projects by `original_sanction_year` and compare overrun rates.
+6. Geo-visualization: state-wise risk concentration (choropleth).
+7. Automated profiling report (`ydata-profiling`) for quick anomaly/skew detection.
+
+**Outputs:** EDA notebook, key insight summary, candidate feature list, candidate target definitions.
+
+**Deliverables:** `eda_report.ipynb` (or HTML export), insight deck for SIH presentation.
+
+**Recommended Tools:** `pandas`, `matplotlib`, `seaborn`, `plotly`, `ydata-profiling`, Jupyter.
+
+**Folder Structure:**
+```
+ml/
+├── notebooks/
+│   └── 01_eda.ipynb
+└── eda_outputs/
+    ├── figures/
+    └── eda_report.html
+```
+
+---
+
+### **Phase 4 — Feature Engineering**
+
+**Objective:** Convert the longitudinal panel into a feature matrix that captures both point-in-time state and trend/velocity signals.
+
+**Inputs:** `project_master.parquet`, `project_month_panel.parquet`.
+
+**Feature Categories:**
+
+| Category | Example Features |
+|---|---|
+| **Static** | Ministry, Sector, State, original_cost_cr, project_age_months |
+| **Point-in-time (snapshot)** | current physical_progress_pct, current cost_overrun_pct, current status |
+| **Trend/velocity** | rolling 3-month avg progress delta, cost growth rate (CAGR-style over report months), progress acceleration/deceleration |
+| **Stagnation signals** | progress_stagnation_streak, months_since_last_cost_revision |
+| **Ratio/derived** | expenditure/revised_cost ratio, revised_cost/original_cost ratio, progress_pct vs expected_progress_pct (based on elapsed time / planned timeline) |
+| **Categorical risk priors** | historical overrun rate for that Ministry × Sector combination (target-encoded, computed only on train fold to avoid leakage) |
+| **Interaction** | sector × project_age bucket, ministry × cost-bucket |
+
+**Processing Steps:**
+1. Build feature-generation pipeline as a `scikit-learn` `Pipeline`/`ColumnTransformer` (reusable at inference time).
+2. Compute rolling-window and lag features per `project_uid` using `groupby().shift()/rolling()`.
+3. Target-encode categorical risk priors **with proper cross-validation folding** to prevent leakage.
+4. Scale numeric features (RobustScaler, given outliers retained from Phase 2).
+5. One-hot / embedding encode low/high-cardinality categoricals appropriately.
+6. Persist the fitted transformer pipeline (`joblib`) for reuse in the FastAPI inference service.
+
+**Outputs:** `feature_matrix.parquet`, fitted `preprocessing_pipeline.joblib`.
+
+**Deliverables:** Feature dictionary/documentation, reusable feature pipeline module.
+
+**Recommended Tools:** `scikit-learn`, `pandas`, `category_encoders`, `feature-engine`.
+
+**Folder Structure:**
+```
+ml/
+├── features/
+│   ├── build_features.py
+│   ├── feature_dictionary.md
+│   └── preprocessing_pipeline.joblib
+```
+
+---
+
+### **Phase 5 — Target Variable Creation**
+
+**Objective:** Define precise, leakage-free labels for supervised learning.
+
+**Processing Steps — three complementary targets:**
+
+1. **Cost Overrun Risk (classification, binary/multiclass)**
+   `cost_overrun_pct = (revised_cost_cr - original_cost_cr) / original_cost_cr`
+   Label: `0 = No overrun (<5%)`, `1 = Moderate (5–25%)`, `2 = Severe (>25%)`.
+
+2. **Time Delay Risk (classification)**
+   Based on `(actual/expected completion date) - original_completion_date`, or where completion date is unavailable, on **progress-vs-time deficit**: `expected_progress_pct(elapsed_time) - actual_progress_pct`.
+   Label: `0 = On track`, `1 = Minor delay`, `2 = Severe delay`.
+
+3. **Composite Project Risk Score (regression, 0–100)**
+   Weighted combination of cost-overrun magnitude, delay magnitude, and stagnation streak, calibrated against final project outcomes (for projects that reach Completed/Closed status within the 14-month window) — used to validate the classification-derived risk score.
+
+**Critical leakage guard:** When predicting risk **at report_month = t**, only use features known up to month *t*; the target is derived from the project's status at a **future** month (t+k) — this is a proper forecasting setup, not same-row leakage. Explicitly construct `(X_t, y_{t+k})` training pairs per project.
+
+**Outputs:** Labeled dataset with three target columns, target distribution report.
+
+**Deliverables:** Target definition doc (for judges/report — this is a key differentiator to explain clearly), labeled train/val/test splits (time-based split, not random, to respect temporal order).
+
+**Recommended Tools:** `pandas`, `numpy`.
+
+---
+
+### **Phase 6 — ML Model Selection & Comparison**
+
+**Objective:** Select the best-performing, most explainable models per target.
+
+**Candidate Models (in order of recommended trial):**
+
+| Task | Baseline | Primary Candidates | Notes |
+|---|---|---|---|
+| Cost Overrun Risk (classification) | Logistic Regression | **XGBoost / LightGBM**, Random Forest | Gradient boosting handles mixed types, outliers, non-linearity well; strong SHAP support |
+| Time Delay Risk (classification) | Logistic Regression | **LightGBM**, CatBoost (good native categorical handling for Ministry/Sector/State) | |
+| Composite Risk Score (regression) | Linear Regression | **XGBoost Regressor**, Gradient Boosting Regressor | |
+| Sequence-aware alternative (stretch goal) | — | LSTM / GRU on the panel sequence, or Temporal Fusion Transformer | Only if time permits — needs more data per project (14 points is short for deep sequence models); tree models on engineered trend features are the pragmatic SIH-timeline choice |
+
+**Processing Steps:**
+1. Time-based train/validation/test split (train on early months, validate/test on later months) — mimics real deployment where you predict the future.
+2. Handle class imbalance (overrun/delay classes likely imbalanced) via `class_weight='balanced'`, or SMOTE/ADASYN on training fold only.
+3. Hyperparameter tuning via `Optuna` with time-series-aware cross-validation (`sklearn.model_selection.TimeSeriesSplit` adapted to project-panel structure — group by `project_uid` to avoid leaking the same project across folds).
+4. Evaluate with metrics appropriate to imbalanced classification: F1 (macro), ROC-AUC, PR-AUC, confusion matrix per class; regression: RMSE, MAE, R².
+5. Compare models on a leaderboard; log every run to MLflow.
+6. Select final model(s) balancing accuracy vs. interpretability (favor LightGBM/XGBoost — strong accuracy + native SHAP compatibility, critical for the Explainable AI requirement).
+
+**Outputs:** Trained model artifacts, MLflow experiment log, model comparison report.
+
+**Deliverables:** `best_model_cost.pkl`, `best_model_delay.pkl`, `best_model_riskscore.pkl`, comparison report.
+
+**Recommended Tools:** `scikit-learn`, `XGBoost`, `LightGBM`, `CatBoost`, `Optuna`, `MLflow`, `imbalanced-learn`.
+
+**Folder Structure:**
+```
+ml/
+├── training/
+│   ├── train_cost_model.py
+│   ├── train_delay_model.py
+│   ├── train_riskscore_model.py
+│   └── model_comparison.ipynb
+├── models/
+│   ├── best_model_cost.pkl
+│   ├── best_model_delay.pkl
+│   └── best_model_riskscore.pkl
+└── mlruns/
+```
+
+---
+
+### **Phase 7 — Risk Scoring Methodology & Early Warning Logic**
+
+**Objective:** Turn model outputs into an actionable, interpretable, single **Project Risk Score (0–100)** and trigger tiered alerts.
+
+**Risk Scoring Methodology:**
+```
+Risk Score = w1 * normalize(P(cost_overrun_severe)) 
+           + w2 * normalize(P(time_delay_severe)) 
+           + w3 * normalize(progress_stagnation_streak) 
+           + w4 * normalize(cost_revision_count)
+```
+- Weights (`w1..w4`) initially set via domain consultation (e.g., MoSPI norms) and refined by calibrating against historical outcomes (projects that actually became "Cost & Time Overrun" in later reports).
+- Output banded into: **Low (0–40) / Medium (41–70) / High (71–100)**.
+
+**Early Warning Logic (rule + ML hybrid, not pure black-box):**
+- **Trend-based triggers** (explainable, non-ML, always active): 3+ consecutive months of zero physical progress; cost revised upward twice within 6 months; expenditure-to-progress ratio inverted (high spend, low physical progress).
+- **ML-based trigger**: Risk Score crosses into High band, or month-over-month Risk Score jump exceeds a threshold (rapid deterioration, not just static high risk).
+- Alerts generated monthly upon new report ingestion, stored with a reason payload (which rule/feature fired) for auditability.
+
+**Outputs:** `risk_scores.parquet` (per project per month), `alerts` table.
+
+**Deliverables:** Risk scoring module, early-warning rules engine, calibration report.
+
+**Recommended Tools:** `pandas`, `scikit-learn` (calibration via `CalibratedClassifierCV`), custom rules engine (Python).
+
+---
+
+### **Phase 8 — Explainable AI (XAI)**
+
+**Objective:** Make every risk flag traceable to specific, human-readable reasons — essential for a government decision-support tool.
+
+**Processing Steps:**
+1. **Global explainability**: SHAP summary plots per model — which features drive overrun/delay risk overall (for the SIH report/judges).
+2. **Local explainability**: per-project SHAP force/waterfall plot — "This project is High Risk primarily due to: 4-month progress stagnation (+18 pts), 22% cost revision (+15 pts), Sector historically has 40% overrun rate (+9 pts)."
+3. Convert SHAP values into **plain-language auto-generated explanations** (template-based NLG) for the dashboard, not raw SHAP plots alone — non-technical MoSPI officials need sentences, not plots.
+4. Feature importance stability check across retraining cycles (ensure explanations don't flip-flop month to month).
+5. Serve SHAP values via the API alongside predictions (cache to avoid recomputation on every request).
+
+**Outputs:** SHAP explainer objects, explanation templates, per-project explanation JSON.
+
+**Deliverables:** XAI module, explanation-generation service.
+
+**Recommended Tools:** `shap`, `lime` (optional secondary), custom NLG templates.
+
+---
+
+### **Phase 9 — Backend Architecture**
+
+**Objective:** Serve data, predictions, risk scores, and explanations via a secure, scalable API.
+
+**Architecture:**
+- **Framework:** FastAPI (async, auto OpenAPI docs, Pydantic validation — fast to build for hackathon timeline, production-grade).
+- **Layers:** `routers/` (REST endpoints) → `services/` (business logic: risk scoring, alert generation) → `ml_inference/` (loads pickled models + pipeline) → `repositories/` (DB access via SQLAlchemy/ORM) → `db/` (PostgreSQL).
+- **Key Endpoints:**
+  - `GET /projects` — filterable, paginated project list (Ministry/Sector/State/Status/RiskBand).
+  - `GET /projects/{project_uid}/history` — full time-series panel for one project.
+  - `GET /projects/{project_uid}/risk` — current risk score + SHAP explanation.
+  - `GET /alerts` — active early-warning alerts, filterable.
+  - `GET /dashboard/summary` — aggregate KPIs (counts by risk band, ministry, sector, state).
+  - `POST /ingest/report` — trigger new monthly report ingestion pipeline (admin only).
+  - `POST /retrain` — trigger scheduled/manual model retraining (admin only).
+- **Auth:** JWT-based, role-based access control (Admin / Analyst / Viewer — MoSPI HQ vs. Ministry-level users likely need scoped data visibility).
+- **Scheduler:** APScheduler or Celery-beat for monthly ingestion + retraining jobs.
+- **Caching:** Redis for dashboard summary/aggregate queries (recomputed hourly, not per-request).
+
+**Recommended Tools:** FastAPI, SQLAlchemy, Pydantic, PostgreSQL, Redis, Celery/APScheduler, JWT (python-jose), Uvicorn/Gunicorn.
+
+**Folder Structure:**
+```
+backend/
+├── app/
+│   ├── main.py
+│   ├── routers/
+│   │   ├── projects.py
+│   │   ├── alerts.py
+│   │   ├── dashboard.py
+│   │   └── admin.py
+│   ├── services/
+│   │   ├── risk_scoring.py
+│   │   └── alerting.py
+│   ├── ml_inference/
+│   │   ├── predictor.py
+│   │   └── explainer.py
+│   ├── repositories/
+│   ├── models/           # SQLAlchemy ORM models
+│   ├── schemas/          # Pydantic schemas
+│   ├── core/              # config, security, deps
+│   └── db/
+├── alembic/                # migrations
+├── tests/
+└── requirements.txt
+```
+
+---
+
+### **Phase 10 — Frontend Dashboard Architecture**
+
+**Objective:** Give MoSPI monitoring agencies an intuitive, drill-down decision-support interface.
+
+**Key Views:**
+1. **Executive Overview** — national KPI cards (total projects, % high-risk, total cost overrun ₹, avg delay), risk-band donut, trend line of risk over 14 months.
+2. **Ministry/Sector/State Drilldown** — filterable table + choropleth map, sortable by risk score.
+3. **Project Detail Page** — full timeline chart (cost & progress vs. planned), current risk score gauge, SHAP-based plain-language explanation panel, alert history.
+4. **Early Warning Alerts Feed** — real-time-style list, severity-coded, with "reason" tags.
+5. **Admin Panel** — trigger ingestion/retraining, view data quality reports, manage user roles.
+
+**Architecture:**
+- **Framework:** React + TypeScript + Vite.
+- **State/Data:** TanStack Query (React Query) for API caching/sync, Zustand/Redux for local UI state.
+- **Visualization:** Recharts/Plotly for time-series & bar charts, `react-simple-maps`/Leaflet for state choropleth, `shap`-value bar charts for explanations.
+- **UI Kit:** Tailwind CSS + shadcn/ui for a clean, accessible, government-appropriate design system.
+- **Auth:** JWT stored in httpOnly cookie, route guards per role.
+
+**Recommended Tools:** React, TypeScript, Vite, TanStack Query, Recharts, Tailwind CSS, shadcn/ui, react-simple-maps.
+
+**Folder Structure:**
+```
+frontend/
+├── src/
+│   ├── pages/
+│   │   ├── Overview.tsx
+│   │   ├── Drilldown.tsx
+│   │   ├── ProjectDetail.tsx
+│   │   ├── Alerts.tsx
+│   │   └── Admin.tsx
+│   ├── components/
+│   ├── hooks/
+│   ├── api/            # typed API client
+│   ├── store/
+│   └── App.tsx
+├── public/
+└── package.json
+```
+
+---
+
+### **Phase 11 — Database Schema**
+
+**Objective:** Normalized, query-efficient operational store supporting both the dashboard and ML retraining loop.
+
+```sql
+-- Entity table: one row per project
+CREATE TABLE project_master (
+    project_uid           VARCHAR(50) PRIMARY KEY,
+    original_project_id   VARCHAR(50),
+    project_name          TEXT NOT NULL,
+    ministry               VARCHAR(150) NOT NULL,
+    sector                 VARCHAR(100) NOT NULL,
+    state                   VARCHAR(100),
+    original_cost_cr       NUMERIC(14,2),
+    original_sanction_date  DATE,
+    original_completion_date DATE,
+    date_precision           VARCHAR(10),
+    first_seen_report_month DATE,
+    last_seen_report_month  DATE,
+    created_at               TIMESTAMP DEFAULT now(),
+    updated_at               TIMESTAMP DEFAULT now()
+);
+
+-- Fact table: one row per project per report month (the time-series core)
+CREATE TABLE project_month_panel (
+    id                     BIGSERIAL PRIMARY KEY,
+    project_uid            VARCHAR(50) REFERENCES project_master(project_uid),
+    report_month            DATE NOT NULL,
+    revised_cost_cr          NUMERIC(14,2),
+    expenditure_cr           NUMERIC(14,2),
+    physical_progress_pct    NUMERIC(5,2),
+    project_status            VARCHAR(30),
+    delta_cost_cr              NUMERIC(14,2),
+    delta_progress_pct         NUMERIC(5,2),
+    progress_stagnation_streak SMALLINT,
+    cost_revision_count        SMALLINT,
+    is_imputed_flags           JSONB,
+    outlier_flag                BOOLEAN DEFAULT FALSE,
+    date_anomaly_flag           BOOLEAN DEFAULT FALSE,
+    UNIQUE(project_uid, report_month)
+);
+
+-- ML outputs
+CREATE TABLE risk_scores (
+    id               BIGSERIAL PRIMARY KEY,
+    project_uid       VARCHAR(50) REFERENCES project_master(project_uid),
+    report_month       DATE NOT NULL,
+    cost_overrun_prob   NUMERIC(5,4),
+    delay_risk_prob      NUMERIC(5,4),
+    risk_score            NUMERIC(5,2),
+    risk_band              VARCHAR(10),
+    model_version           VARCHAR(20),
+    scored_at                TIMESTAMP DEFAULT now(),
+    UNIQUE(project_uid, report_month, model_version)
+);
+
+CREATE TABLE explanations (
+    id            BIGSERIAL PRIMARY KEY,
+    risk_score_id  BIGINT REFERENCES risk_scores(id),
+    feature_name    VARCHAR(100),
+    shap_value       NUMERIC(10,4),
+    explanation_text TEXT
+);
+
+CREATE TABLE alerts (
+    id            BIGSERIAL PRIMARY KEY,
+    project_uid    VARCHAR(50) REFERENCES project_master(project_uid),
+    report_month    DATE NOT NULL,
+    alert_type       VARCHAR(50),   -- 'stagnation','cost_spike','ml_high_risk','risk_jump'
+    severity          VARCHAR(10),
+    reason             TEXT,
+    created_at          TIMESTAMP DEFAULT now(),
+    acknowledged        BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE users (
+    id            BIGSERIAL PRIMARY KEY,
+    email          VARCHAR(150) UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    role             VARCHAR(20),   -- 'admin','analyst','viewer'
+    ministry_scope    VARCHAR(150), -- nullable; restricts data visibility if set
+    created_at          TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE ingestion_log (
+    id            BIGSERIAL PRIMARY KEY,
+    report_month   DATE NOT NULL,
+    rows_extracted  INT,
+    warnings_count   INT,
+    status            VARCHAR(20),
+    run_at             TIMESTAMP DEFAULT now()
+);
+```
+
+**Indexes:** `(ministry, sector, state)` composite on `project_master`; `(report_month, risk_band)` on `risk_scores`; `(report_month)` on `project_month_panel`.
+
+**Recommended Tools:** PostgreSQL 15+, Alembic for migrations, SQLAlchemy ORM.
+
+---
+
+### **Phase 12 — Deployment Architecture**
+
+**Objective:** Containerized, reproducible, cloud/on-prem-portable deployment (open-source stack — fits MoSPI/GoI infra constraints).
+
+```mermaid
+flowchart LR
+    subgraph Client
+        U[Browser - React SPA]
+    end
+    subgraph Edge
+        N[Nginx Reverse Proxy + TLS]
+    end
+    subgraph App["Docker Compose / K8s Cluster"]
+        FE[Frontend Container - static build]
+        BE[FastAPI Backend Container]
+        ML[ML Inference Service]
+        RD[(Redis Cache)]
+        PG[(PostgreSQL)]
+        WK[Celery Worker - ingestion/retraining]
+    end
+    subgraph Obs["Observability"]
+        PR[Prometheus]
+        GR[Grafana]
+        LG[Loki/ELK Logs]
+    end
+
+    U --> N --> FE
+    N --> BE
+    BE --> RD
+    BE --> PG
+    BE --> ML
+    WK --> PG
+    WK --> ML
+    BE --> PR
+    WK --> PR
+    PR --> GR
+    BE --> LG
+```
+
+**Processing Steps:**
+1. Containerize each service (`Dockerfile` per component) + `docker-compose.yml` for local/staging.
+2. For production/scale demo: Kubernetes manifests (or Docker Swarm for simpler SIH-scale deployment) with separate deployments for backend, ML inference, frontend, worker.
+3. CI/CD via GitHub Actions: lint → test → build image → push to registry → deploy.
+4. Nginx as reverse proxy + TLS termination (Let's Encrypt/Certbot).
+5. Environment-based config via `.env` + secrets manager (or K8s Secrets).
+6. Monitoring: Prometheus + Grafana for API latency/error rates, model prediction drift dashboard.
+7. Backup strategy: scheduled `pg_dump` to object storage (MinIO for open-source S3-compatible storage).
+8. Model versioning: MLflow Model Registry, blue-green swap for new model deployment without downtime.
+
+**Recommended Tools:** Docker, Docker Compose, Kubernetes (optional/stretch), Nginx, GitHub Actions, Prometheus, Grafana, MinIO, Let's Encrypt.
+
+---
+
+### **Phase 13 — Documentation Plan**
+
+**Objective:** Judge-ready and developer-ready documentation.
+
+**Deliverables:**
+1. **Problem–Solution mapping doc** — maps every PS requirement line to the implemented component (judges score against this directly).
+2. **Architecture doc** — this roadmap, refined with final diagrams.
+3. **Data dictionary** — every field in `project_master`/`project_month_panel` with type, source, transformation logic.
+4. **Preprocessing report** — before/after data quality metrics, all cleaning decisions justified (this is your strongest differentiator — most teams underestimate this).
+5. **Model card** per model — features used, metrics, known limitations, fairness/bias notes (e.g., does the model underperform for smaller ministries with less historical data?).
+6. **API documentation** — auto-generated via FastAPI OpenAPI/Swagger, plus a Postman collection.
+7. **User guide** — for MoSPI dashboard end-users (screenshots + walkthrough).
+8. **Deployment runbook** — how to stand up the full stack from scratch.
+9. **SIH pitch deck** — problem, novelty (longitudinal panel + hybrid rule/ML early warning + XAI), demo flow, impact metrics, future roadmap (state government rollout, integration with PFMS/GeM).
+
+**Recommended Tools:** MkDocs/Docusaurus for a documentation site, Swagger/OpenAPI (auto), draw.io/Mermaid for diagrams.
+
+---
+
+## 3. ML Pipeline Diagram
+
+```mermaid
+flowchart LR
+    A[project_month_panel] --> B[Feature Engineering Pipeline]
+    B --> C[Time-based Train/Val/Test Split]
+    C --> D[Class Imbalance Handling]
+    D --> E[Model Training - XGBoost/LightGBM/CatBoost]
+    E --> F[Hyperparameter Tuning - Optuna]
+    F --> G[Model Evaluation - F1/AUC/RMSE]
+    G --> H{Best Model?}
+    H -->|No| F
+    H -->|Yes| I[Calibration]
+    I --> J[SHAP Explainer Fit]
+    J --> K[Model Registry - MLflow]
+    K --> L[Risk Scoring Engine]
+    L --> M[Early Warning Rules Engine]
+    M --> N[(risk_scores + alerts tables)]
+```
+
+---
+
+## 4. Database → Backend → ML → Frontend Interaction Flow
+
+```mermaid
+sequenceDiagram
+    participant User as MoSPI User
+    participant FE as React Dashboard
+    participant API as FastAPI Backend
+    participant Cache as Redis
+    participant DB as PostgreSQL
+    participant ML as ML Inference Service
+
+    User->>FE: Opens Project Detail page
+    FE->>API: GET /projects/{id}/risk
+    API->>Cache: Check cached risk score
+    alt Cache hit
+        Cache-->>API: Return cached risk + explanation
+    else Cache miss
+        API->>DB: Fetch latest panel data for project
+        DB-->>API: project_month_panel rows
+        API->>ML: Request prediction + SHAP explanation
+        ML-->>API: risk_score, risk_band, shap_values
+        API->>DB: Persist to risk_scores, explanations
+        API->>Cache: Store result (TTL)
+    end
+    API-->>FE: JSON {risk_score, band, explanation, history}
+    FE-->>User: Render risk gauge + timeline + plain-language reasons
+
+    Note over API,ML: Monthly batch job (Celery)
+    API->>ML: Trigger ingestion + retrain (scheduled)
+    ML->>DB: Write new risk_scores + alerts for all projects
+    ML-->>API: Retrain complete, new model_version registered
+```
+
+---
+
+## 5. Complete End-to-End Solution Flow (Text Summary)
+
+```
+14 PDFs → PDF Extraction (pdfplumber/camelot/OCR) → Raw Monthly Tables
+   → Schema Normalization → Merge into Long Format
+   → Project ID Reconciliation (fuzzy matching) → Longitudinal Panel Build
+   → Missing Value / Datatype / Date / Numeric / Categorical Cleaning
+   → Outlier Flagging → Validation (Great Expectations)
+   → Master Dataset (project_master + project_month_panel)
+   → EDA → Feature Engineering (trend, velocity, stagnation, ratio features)
+   → Target Engineering (cost overrun, time delay, composite risk — time-shifted, leakage-free)
+   → Model Training (XGBoost/LightGBM, time-based CV, Optuna tuning)
+   → Calibration → SHAP Explainability
+   → Risk Scoring Engine (weighted composite score, banded)
+   → Early Warning Rules Engine (trend triggers + ML triggers)
+   → Persist to PostgreSQL (risk_scores, alerts, explanations)
+   → FastAPI Backend (REST API, auth, caching, scheduler)
+   → React Dashboard (overview, drilldown, project detail, alerts, admin)
+   → MoSPI Monitoring Agency Decision-Making
+```
+
+---
+
+## 6. Final Project Folder Architecture
+
+```
+sih2026-mospi-riskmonitor/
+├── data/
+│   ├── source_pdfs/
+│   ├── raw_zone/
+│   ├── interim/
+│   ├── master/
+│   ├── validation/
+│   └── scripts/
+├── ml/
+│   ├── notebooks/
+│   ├── eda_outputs/
+│   ├── features/
+│   ├── training/
+│   ├── models/
+│   └── mlruns/
+├── backend/
+│   ├── app/
+│   ├── alembic/
+│   └── tests/
+├── frontend/
+│   ├── src/
+│   └── public/
+├── infra/
+│   ├── docker/
+│   │   ├── Dockerfile.backend
+│   │   ├── Dockerfile.frontend
+│   │   └── Dockerfile.ml
+│   ├── k8s/                    # optional/stretch
+│   ├── nginx/
+│   └── monitoring/
+│       ├── prometheus.yml
+│       └── grafana/
+├── docs/
+│   ├── architecture/
+│   ├── data_dictionary.md
+│   ├── preprocessing_report.md
+│   ├── model_cards/
+│   ├── api_docs/
+│   ├── user_guide.md
+│   └── sih_pitch_deck.pptx
+├── docker-compose.yml
+├── .github/workflows/ci.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+## 7. Recommended Tech Stack Summary
+
+| Layer | Technology |
+|---|---|
+| PDF Extraction | pdfplumber, camelot-py, tabula-py, pytesseract |
+| Data Processing | pandas, numpy, rapidfuzz |
+| Data Validation | pandera / Great Expectations, ydata-profiling |
+| Data Versioning | DVC |
+| ML Modeling | scikit-learn, XGBoost, LightGBM, CatBoost, Optuna |
+| Explainability | SHAP |
+| Experiment Tracking | MLflow |
+| Backend | FastAPI, SQLAlchemy, Pydantic, Celery, Redis |
+| Database | PostgreSQL |
+| Frontend | React, TypeScript, Vite, TanStack Query, Recharts, Tailwind CSS |
+| DevOps | Docker, Docker Compose, GitHub Actions, Nginx, Prometheus, Grafana |
+| Docs | MkDocs/Docusaurus, Swagger/OpenAPI |
+
+**Everything above is open-source**, satisfying the hackathon and academic constraint.
+
+---
+
+## 8. Key Differentiators to Emphasize to Judges
+
+1. **True longitudinal modeling** — most teams will treat each monthly report as an independent snapshot; treating Project ID recurrence as a time series (trend, velocity, stagnation-streak features) is the core technical differentiator and directly addresses the PS's "predict before issues become severe" requirement.
+2. **Leakage-free, time-shifted target design** — predicting future status from present features, validated with time-based splits.
+3. **Hybrid rule + ML early warning** — not a black box; auditable trend-based triggers complement ML risk scores.
+4. **Explainability as a first-class citizen** — plain-language, per-project reasons, not just a dashboard number.
+5. **Production-grade, fully open-source architecture** — directly deployable by MoSPI without licensing constraints.

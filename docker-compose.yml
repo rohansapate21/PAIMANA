@@ -1,0 +1,208 @@
+# ============================================================
+# SIH 2026 — PS26103 | Docker Compose
+# AI-Powered Predictive Analytics & Early Warning System
+# ============================================================
+
+version: "3.9"
+
+services:
+  # --- PostgreSQL Database ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: paimana-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sih2026_paimana}
+      POSTGRES_USER: ${POSTGRES_USER:-paimana_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paimana_admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis Cache ---
+  redis:
+    image: redis:7-alpine
+    container_name: paimana-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- FastAPI Backend ---
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+    container_name: paimana-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./ml/models:/app/ml/models:ro
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # --- ML Inference Service ---
+  ml-service:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.ml
+    container_name: paimana-ml
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./ml:/app/ml
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- Celery Worker (ingestion & retraining) ---
+  celery-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+    container_name: paimana-celery
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A backend.app.core.celery_app worker -l info
+    volumes:
+      - ./backend:/app/backend
+      - ./ml:/app/ml
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # --- Frontend (React) ---
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+    container_name: paimana-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app/frontend
+    depends_on:
+      - backend
+
+  # --- MLflow Tracking Server ---
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    container_name: paimana-mlflow
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlflow-artifacts
+    volumes:
+      - mlflow_data:/mlflow-artifacts
+      - mlflow_db:/mlflow.db
+
+  # --- Nginx Reverse Proxy (Gateway) ---
+  nginx:
+    image: nginx:alpine
+    container_name: paimana-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+      - frontend
+
+  # --- Prometheus Metrics Aggregator ---
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: paimana-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - backend
+
+  # --- Grafana Dashboard Visualization ---
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: paimana-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # --- PostgreSQL Exporter ---
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: paimana-postgres-exporter
+    restart: unless-stopped
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-paimana_admin}:${POSTGRES_PASSWORD:-changeme_in_production}@postgres:5432/${POSTGRES_DB:-sih2026_paimana}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- Redis Exporter ---
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.58.0
+    container_name: paimana-redis-exporter
+    restart: unless-stopped
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  mlflow_data:
+  mlflow_db:
+  prometheus_data:
+  grafana_data:
